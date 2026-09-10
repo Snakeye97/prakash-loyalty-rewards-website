@@ -25,10 +25,10 @@ Deno.serve(async req=>{
   else {body=await req.json();action=String(body.action||'')}
 
   if(action==='login'){
-   const phone=String(body.phone||'').replace(/\D/g,''); const pin=String(body.pin||''); const name=String(body.name||'').trim()
-   if(!/^\d{10}$/.test(phone)||!/^[0-9]{4,6}$/.test(pin)) return json({ok:false,error:'Invalid mobile number or PIN.'},400)
+  const phone=String(body.phone||'').replace(/\D/g,''); const name=String(body.name||'').trim()
+  if(!/^\d{10}$/.test(phone)||name.length<2) return json({ok:false,error:'Invalid name or mobile number.'},400)
    if(name.length>100) return json({ok:false,error:'Name is too long.'},400)
-   const clientIp=(req.headers.get('x-forwarded-for')||req.headers.get('cf-connecting-ip')||'unknown').split(',')[0].trim(); const {data,error}=await admin.rpc('customer_login_secure',{p_phone:phone,p_pin:pin,p_name:name,p_ip:clientIp})
+  const clientIp=(req.headers.get('x-forwarded-for')||req.headers.get('cf-connecting-ip')||'unknown').split(',')[0].trim(); const {data,error}=await admin.rpc('customer_login_secure',{p_phone:phone,p_pin:'',p_name:name,p_ip:clientIp})
     if(error){console.error('customer_login_secure failed',error);return json({ok:false,error:'Login service unavailable.'},500)}
    if(!data?.ok) return json(data,401)
    return json(data)

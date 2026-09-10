@@ -143,13 +143,12 @@ begin
  if a.attempts>=8 then return jsonb_build_object('ok',false,'error','Too many login attempts. Please wait 15 minutes.'); end if;
  update public.customer_login_attempts set attempts=attempts+1 where bucket_key=key;
 
- if not (p_phone ~ '^[0-9]{10}$' and p_pin ~ '^[0-9]{4,6}$') then return jsonb_build_object('ok',false,'error','Invalid mobile number or PIN.'); end if;
+ if not (p_phone ~ '^[0-9]{10}$' and length(trim(coalesce(p_name,''))) between 2 and 100) then return jsonb_build_object('ok',false,'error','Invalid name or mobile number.'); end if;
  select * into c from public.customers where phone=p_phone for update;
  if c.id is null then
-   if length(trim(coalesce(p_name,'')))<2 or length(trim(p_name))>100 then return jsonb_build_object('ok',false,'error','Enter a valid customer name to create your account.'); end if;
-   insert into public.customers(name,phone,pin_hash) values(trim(p_name),p_phone,public.pin_digest(p_pin)) returning * into c;
+   insert into public.customers(name,phone,pin_hash) values(trim(p_name),p_phone,public.pin_digest('')) returning * into c;
  else
-   if c.pin_hash <> public.pin_digest(p_pin) then return jsonb_build_object('ok',false,'error','Incorrect mobile PIN.'); end if;
+   if lower(trim(c.name)) <> lower(trim(p_name)) then return jsonb_build_object('ok',false,'error','Name and mobile number do not match.'); end if;
  end if;
 
  -- Successful authentication clears the rate-limit bucket.
