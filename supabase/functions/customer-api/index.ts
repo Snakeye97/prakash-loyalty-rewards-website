@@ -57,5 +57,5 @@ Deno.serve(async req=>{
    return json(data)
   }
   return json({ok:false,error:'Unknown action.'},400)
- }catch(e){console.error(e);const message=e instanceof Error?e.message:(e&&typeof e==='object'&&'message' in e?String(e.message):'Request failed.');return json({ok:false,error:message},401)}
+ }catch(e){console.error(e);const errorObject=e&&typeof e==='object'?e as Record<string,unknown>:{};const message=e instanceof Error?e.message:String(errorObject.message||errorObject.details||errorObject.hint||errorObject.code||'Request failed.');return json({ok:false,error:message},400)}
 })
