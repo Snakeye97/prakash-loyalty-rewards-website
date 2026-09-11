@@ -41,17 +41,23 @@ set points = case when status='approved' then floor(amount / 100)::int * 10 else
 create table if not exists public.redemptions(
  id uuid primary key default gen_random_uuid(),
  customer_id uuid not null references public.customers(id) on delete cascade,
+ bill_id uuid references public.bills(id) on delete restrict,
  points integer not null default 10 check(points=10),
  reward_amount numeric(12,2) not null default 100 check(reward_amount=100),
  created_at timestamptz not null default now(),
  created_by uuid
 );
 
+alter table public.redemptions add column if not exists bill_id uuid references public.bills(id) on delete restrict;
+create unique index if not exists redemptions_bill_id_uidx on public.redemptions(bill_id) where bill_id is not null;
+
 alter table public.redemptions drop constraint if exists redemptions_points_check;
 alter table public.redemptions drop constraint if exists redemptions_reward_amount_check;
 alter table public.redemptions add constraint redemptions_points_check check(points=5 or (points>0 and points%10=0));
 alter table public.redemptions add constraint redemptions_reward_amount_check check((points=5 and reward_amount=200) or (points>0 and points%10=0 and reward_amount=points));
-alter table public.redemptions alter column points set default 10;
+alter table public.redemptions drop constraint if exists redemptions_min_points_check;
+alter table public.redemptions add constraint redemptions_min_points_check check(points>=100 and points%10=0) not valid;
+alter table public.redemptions alter column points set default 100;
 alter table public.redemptions alter column reward_amount set default 100;
 
 create table if not exists public.owner_users(
@@ -161,47 +167,65 @@ end $$;
 create or replace function public.submit_bill_secure(p_customer_id uuid,p_bill_number text,p_amount numeric,p_purchase_date date,p_photo_path text)
 returns jsonb language plpgsql security definer set search_path=public
 as $$
-declare path_prefix text;
+declare path_prefix text; normalized_bill_number text;
 begin
  if not exists(select 1 from public.customers where id=p_customer_id) then return jsonb_build_object('ok',false,'error','Customer not found.'); end if;
  if length(trim(coalesce(p_bill_number,'')))<1 or length(trim(p_bill_number))>80 then return jsonb_build_object('ok',false,'error','Invalid bill number.'); end if;
  if p_amount is null or p_amount<100 or p_amount>100000000 then return jsonb_build_object('ok',false,'error','Invalid bill amount.'); end if;
  if p_purchase_date is null or p_purchase_date>current_date then return jsonb_build_object('ok',false,'error','Purchase date cannot be in the future.'); end if;
+ normalized_bill_number:=lower(trim(p_bill_number));
+ perform pg_advisory_xact_lock(hashtextextended(p_customer_id::text||':'||normalized_bill_number,0));
+ if exists(select 1 from public.bills where customer_id=p_customer_id and lower(trim(bill_number))=normalized_bill_number) then
+   return jsonb_build_object('ok',false,'error','This bill number has already been submitted.');
+ end if;
  path_prefix:=p_customer_id::text||'/';
  if p_photo_path is null or left(p_photo_path,length(path_prefix))<>path_prefix then return jsonb_build_object('ok',false,'error','Invalid bill photo path.'); end if;
  insert into public.bills(customer_id,bill_number,amount,purchase_date,photo_path) values(p_customer_id,trim(p_bill_number),p_amount,p_purchase_date,p_photo_path);
  return jsonb_build_object('ok',true);
 end $$;
 
-drop function if exists public.redeem_reward_secure(uuid);
-create or replace function public.redeem_reward_secure(p_customer_id uuid,p_points integer)
+drop function if exists public.redeem_reward_secure(uuid,integer);
+drop function if exists public.redeem_reward_secure(uuid,integer,text);
+create or replace function public.redeem_reward_secure(p_customer_id uuid,p_points integer,p_bill_number text)
 returns jsonb language plpgsql security definer set search_path=public
 as $$
-declare earned int; used int; avail int;
+declare earned int; used int; avail int; redeemed_bill_id uuid; normalized_bill_number text;
 begin
- if p_points is null or p_points<10 or p_points%10<>0 then return jsonb_build_object('ok',false,'error','Redeem points in multiples of 10.'); end if;
+ if p_points is null or p_points<100 or p_points%10<>0 then return jsonb_build_object('ok',false,'error','Redeem a minimum of 100 points in multiples of 10.'); end if;
+ normalized_bill_number:=lower(trim(coalesce(p_bill_number,'')));
+ if normalized_bill_number='' then return jsonb_build_object('ok',false,'error','Enter the bill number used for this redemption.'); end if;
  perform pg_advisory_xact_lock(hashtextextended(p_customer_id::text,0));
+ select b.id into redeemed_bill_id from public.bills b where b.customer_id=p_customer_id and lower(trim(b.bill_number))=normalized_bill_number and b.status='approved' for update;
+ if redeemed_bill_id is null then return jsonb_build_object('ok',false,'error','Approved bill not found for this customer.'); end if;
+ if exists(select 1 from public.redemptions where bill_id=redeemed_bill_id) then return jsonb_build_object('ok',false,'error','This bill has already been used for redemption.'); end if;
  select coalesce(sum(points) filter(where status='approved'),0)::int into earned from public.bills where customer_id=p_customer_id;
  select coalesce(sum(points),0)::int into used from public.redemptions where customer_id=p_customer_id;
  avail:=earned-used;
  if avail<p_points then return jsonb_build_object('ok',false,'error','You do not have enough available points.'); end if;
- insert into public.redemptions(customer_id,points,reward_amount) values(p_customer_id,p_points,p_points);
+ insert into public.redemptions(customer_id,bill_id,points,reward_amount) values(p_customer_id,redeemed_bill_id,p_points,p_points);
  return jsonb_build_object('ok',true,'message','₹'||p_points||' reward redeemed successfully.');
 end $$;
 
-create or replace function public.owner_redeem_customer(p_customer_id uuid,p_points integer)
+drop function if exists public.owner_redeem_customer(uuid,integer);
+drop function if exists public.owner_redeem_customer(uuid,integer,text);
+create or replace function public.owner_redeem_customer(p_customer_id uuid,p_points integer,p_bill_number text)
 returns jsonb language plpgsql security definer set search_path=public
 as $$
-declare earned int; used int; avail int;
+declare earned int; used int; avail int; redeemed_bill_id uuid; normalized_bill_number text;
 begin
  if not public.is_owner() then return jsonb_build_object('ok',false,'error','Owner access required.'); end if;
- if p_points is null or p_points<10 or p_points%10<>0 then return jsonb_build_object('ok',false,'error','Redeem points in multiples of 10.'); end if;
+ if p_points is null or p_points<100 or p_points%10<>0 then return jsonb_build_object('ok',false,'error','Redeem a minimum of 100 points in multiples of 10.'); end if;
+ normalized_bill_number:=lower(trim(coalesce(p_bill_number,'')));
+ if normalized_bill_number='' then return jsonb_build_object('ok',false,'error','Enter the bill number used for this redemption.'); end if;
  perform pg_advisory_xact_lock(hashtextextended(p_customer_id::text,0));
+ select b.id into redeemed_bill_id from public.bills b where b.customer_id=p_customer_id and lower(trim(b.bill_number))=normalized_bill_number and b.status='approved' for update;
+ if redeemed_bill_id is null then return jsonb_build_object('ok',false,'error','Approved bill not found for this customer.'); end if;
+ if exists(select 1 from public.redemptions where bill_id=redeemed_bill_id) then return jsonb_build_object('ok',false,'error','This bill has already been used for redemption.'); end if;
  select coalesce(sum(points) filter(where status='approved'),0)::int into earned from public.bills where customer_id=p_customer_id;
  select coalesce(sum(points),0)::int into used from public.redemptions where customer_id=p_customer_id;
  avail:=earned-used;
  if avail<p_points then return jsonb_build_object('ok',false,'error','Customer does not have enough available points.'); end if;
- insert into public.redemptions(customer_id,points,reward_amount,created_by) values(p_customer_id,p_points,p_points,auth.uid());
+ insert into public.redemptions(customer_id,bill_id,points,reward_amount,created_by) values(p_customer_id,redeemed_bill_id,p_points,p_points,auth.uid());
  return jsonb_build_object('ok',true,'message','₹'||p_points||' reward redeemed for customer.');
 end $$;
 
@@ -215,8 +239,8 @@ begin
  select count(*)::int into pc from public.customers;
  select coalesce(sum(points),0)::int into issued from public.bills where status='approved';
  select coalesce(sum(points),0)::int into red from public.redemptions;
- select coalesce(jsonb_agg(jsonb_build_object('date',r.created_at,'name',c.name,'phone',c.phone,'points',r.points,'reward',r.reward_amount) order by r.created_at desc),'[]'::jsonb)
- into redemptions from public.redemptions r join public.customers c on c.id=r.customer_id;
+ select coalesce(jsonb_agg(jsonb_build_object('date',r.created_at,'name',c.name,'phone',c.phone,'bill',b.bill_number,'points',r.points,'reward',r.reward_amount) order by r.created_at desc),'[]'::jsonb)
+ into redemptions from public.redemptions r join public.customers c on c.id=r.customer_id left join public.bills b on b.id=r.bill_id;
  select coalesce(jsonb_agg(x order by x->>'name'),'[]'::jsonb) into customers from (
   select jsonb_build_object('id',c.id,'name',c.name,'phone',c.phone,'bills',(select count(*) from public.bills b where b.customer_id=c.id),'earned',(select coalesce(sum(points),0) from public.bills b where b.customer_id=c.id and b.status='approved'),'redeemed',(select coalesce(sum(points),0) from public.redemptions r where r.customer_id=c.id),'available',(select coalesce(sum(points),0) from public.bills b where b.customer_id=c.id and b.status='approved')-(select coalesce(sum(points),0) from public.redemptions r where r.customer_id=c.id)) x from public.customers c) q;
  return jsonb_build_object('ok',true,'stats',jsonb_build_object('customers',pc,'pendingBills',jsonb_array_length(pending),'issued',issued,'redeemed',red),'pending',pending,'customers',customers,'redemptions',redemptions);
@@ -252,8 +276,8 @@ revoke all on function public.customer_login_secure(text,text,text,text) from pu
 revoke all on function public.customer_session_lookup(text) from public,anon,authenticated;
 revoke all on function public.customer_data_secure(uuid) from public,anon,authenticated;
 revoke all on function public.submit_bill_secure(uuid,text,numeric,date,text) from public,anon,authenticated;
-revoke all on function public.redeem_reward_secure(uuid,integer) from public,anon,authenticated;
-revoke all on function public.owner_redeem_customer(uuid,integer) from public,anon,authenticated;
+revoke all on function public.redeem_reward_secure(uuid,integer,text) from public,anon,authenticated;
+revoke all on function public.owner_redeem_customer(uuid,integer,text) from public,anon,authenticated;
 revoke all on function public.is_owner() from public,anon;
 revoke all on function public.owner_dashboard() from public,anon;
 revoke all on function public.approve_bill(uuid) from public,anon;
@@ -263,8 +287,8 @@ grant execute on function public.customer_login_secure(text,text,text,text) to s
 grant execute on function public.customer_session_lookup(text) to service_role;
 grant execute on function public.customer_data_secure(uuid) to service_role;
 grant execute on function public.submit_bill_secure(uuid,text,numeric,date,text) to service_role;
-grant execute on function public.redeem_reward_secure(uuid,integer) to service_role;
-grant execute on function public.owner_redeem_customer(uuid,integer) to authenticated;
+grant execute on function public.redeem_reward_secure(uuid,integer,text) to service_role;
+grant execute on function public.owner_redeem_customer(uuid,integer,text) to authenticated;
 grant execute on function public.is_owner() to authenticated;
 grant execute on function public.owner_dashboard() to authenticated;
 grant execute on function public.approve_bill(uuid) to authenticated;
