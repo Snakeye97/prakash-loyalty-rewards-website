@@ -315,7 +315,6 @@ grant execute on function public.customer_session_lookup(text) to service_role;
 grant execute on function public.customer_data_secure(uuid) to service_role;
 grant execute on function public.submit_bill_secure(uuid,text,numeric,date,text) to service_role;
 grant execute on function public.redeem_reward_secure(uuid,integer,text) to service_role;
-grant execute on function public.redeem_reward_secure(uuid,integer) to service_role;
 grant execute on function public.owner_redeem_customer(uuid,integer,text) to authenticated;
 grant execute on function public.is_owner() to authenticated;
 grant execute on function public.owner_dashboard() to authenticated;
