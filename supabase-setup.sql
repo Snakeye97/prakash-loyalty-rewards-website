@@ -51,7 +51,7 @@ create table if not exists public.redemptions(
 alter table public.redemptions add column if not exists bill_id uuid references public.bills(id) on delete restrict;
 alter table public.redemptions add column if not exists redeemed_bill_number text;
 create unique index if not exists redemptions_bill_id_uidx on public.redemptions(bill_id) where bill_id is not null;
-create unique index if not exists redemptions_bill_number_uidx on public.redemptions(lower(trim(redeemed_bill_number))) where redeemed_bill_number is not null;
+create index if not exists redemptions_bill_number_idx on public.redemptions(lower(trim(redeemed_bill_number))) where redeemed_bill_number is not null;
 
 alter table public.redemptions drop constraint if exists redemptions_points_check;
 alter table public.redemptions drop constraint if exists redemptions_reward_amount_check;
@@ -199,21 +199,6 @@ end $$;
 
 drop function if exists public.redeem_reward_secure(uuid,integer);
 drop function if exists public.redeem_reward_secure(uuid,integer,text);
-create or replace function public.redeem_reward_secure(p_customer_id uuid,p_points integer)
-returns jsonb language plpgsql security definer set search_path=public
-as $$
-declare earned int; used int; avail int;
-begin
- if p_points is null or p_points<100 or p_points%10<>0 then return jsonb_build_object('ok',false,'error','Redeem a minimum of 100 points in multiples of 10.'); end if;
- perform pg_advisory_xact_lock(hashtextextended(p_customer_id::text,0));
- select coalesce(sum(points) filter(where status='approved'),0)::int into earned from public.bills where customer_id=p_customer_id;
- select coalesce(sum(points),0)::int into used from public.redemptions where customer_id=p_customer_id;
- avail:=earned-used;
- if avail<p_points then return jsonb_build_object('ok',false,'error','You do not have enough available points.'); end if;
- insert into public.redemptions(customer_id,points,reward_amount) values(p_customer_id,p_points,p_points);
- return jsonb_build_object('ok',true,'message','₹'||p_points||' reward redeemed successfully.');
-end $$;
-
 create or replace function public.redeem_reward_secure(p_customer_id uuid,p_points integer,p_bill_number text)
 returns jsonb language plpgsql security definer set search_path=public
 as $$
@@ -303,7 +288,6 @@ revoke all on function public.customer_session_lookup(text) from public,anon,aut
 revoke all on function public.customer_data_secure(uuid) from public,anon,authenticated;
 revoke all on function public.submit_bill_secure(uuid,text,numeric,date,text) from public,anon,authenticated;
 revoke all on function public.redeem_reward_secure(uuid,integer,text) from public,anon,authenticated;
-revoke all on function public.redeem_reward_secure(uuid,integer) from public,anon,authenticated;
 revoke all on function public.owner_redeem_customer(uuid,integer,text) from public,anon,authenticated;
 revoke all on function public.is_owner() from public,anon;
 revoke all on function public.owner_dashboard() from public,anon;
