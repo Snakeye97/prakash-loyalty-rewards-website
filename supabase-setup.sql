@@ -55,6 +55,17 @@ create unique index if not exists redemptions_bill_number_uidx on public.redempt
 
 alter table public.redemptions drop constraint if exists redemptions_points_check;
 alter table public.redemptions drop constraint if exists redemptions_reward_amount_check;
+do $$
+declare constraint_row record;
+begin
+ for constraint_row in
+   select conname from pg_constraint
+   where conrelid='public.redemptions'::regclass
+     and pg_get_constraintdef(oid) in ('CHECK ((points = 10))','CHECK ((reward_amount = 100))')
+ loop
+   execute format('alter table public.redemptions drop constraint if exists %I',constraint_row.conname);
+ end loop;
+end $$;
 alter table public.redemptions add constraint redemptions_points_check check(points=5 or (points>0 and points%10=0));
 alter table public.redemptions add constraint redemptions_reward_amount_check check((points=5 and reward_amount=200) or (points>0 and points%10=0 and reward_amount=points));
 alter table public.redemptions drop constraint if exists redemptions_min_points_check;

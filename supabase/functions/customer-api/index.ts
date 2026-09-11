@@ -57,5 +57,5 @@ Deno.serve(async req=>{
    return json(data)
   }
   return json({ok:false,error:'Unknown action.'},400)
- }catch(e){console.error(e);const errorObject=e&&typeof e==='object'?e as Record<string,unknown>:{};const message=e instanceof Error?e.message:String(errorObject.message||errorObject.details||errorObject.hint||errorObject.code||'Request failed.');return json({ok:false,error:message},400)}
+ }catch(e){console.error(e);const errorObject=e&&typeof e==='object'?e as Record<string,unknown>:{};const code=String(errorObject.code||'');const message=code==='23514'?'Redemption settings are outdated. Run the latest supabase-setup.sql first.':e instanceof Error?e.message:String(errorObject.message||errorObject.details||errorObject.hint||errorObject.code||'Request failed.');return json({ok:false,error:message},400)}
 })
