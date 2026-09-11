@@ -40,8 +40,7 @@ Deno.serve(async req=>{
   }
   if(action==='redeem'){
     const points=Number(body.points); if(!Number.isInteger(points)||points<100||points%10!==0) return json({ok:false,error:'Redeem a minimum of 100 points in multiples of 10.'},400)
-    const billNumber=String(body.bill_number||'').trim(); if(!billNumber) return json({ok:false,error:'Enter the bill number used for this redemption.'},400)
-    const {data,error}=await admin.rpc('redeem_reward_secure',{p_customer_id:customerId,p_points:points,p_bill_number:billNumber}); if(error) throw error; return json(data)
+    const {data,error}=await admin.rpc('redeem_reward_secure',{p_customer_id:customerId,p_points:points}); if(error) throw error; return json(data)
   }
   if(action==='submit_bill'){
    const bill=body.bill_number.trim(); const amount=Number(body.amount); const date=body.purchase_date; const file=body.photo as File

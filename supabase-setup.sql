@@ -199,6 +199,21 @@ end $$;
 
 drop function if exists public.redeem_reward_secure(uuid,integer);
 drop function if exists public.redeem_reward_secure(uuid,integer,text);
+create or replace function public.redeem_reward_secure(p_customer_id uuid,p_points integer)
+returns jsonb language plpgsql security definer set search_path=public
+as $$
+declare earned int; used int; avail int;
+begin
+ if p_points is null or p_points<100 or p_points%10<>0 then return jsonb_build_object('ok',false,'error','Redeem a minimum of 100 points in multiples of 10.'); end if;
+ perform pg_advisory_xact_lock(hashtextextended(p_customer_id::text,0));
+ select coalesce(sum(points) filter(where status='approved'),0)::int into earned from public.bills where customer_id=p_customer_id;
+ select coalesce(sum(points),0)::int into used from public.redemptions where customer_id=p_customer_id;
+ avail:=earned-used;
+ if avail<p_points then return jsonb_build_object('ok',false,'error','You do not have enough available points.'); end if;
+ insert into public.redemptions(customer_id,points,reward_amount) values(p_customer_id,p_points,p_points);
+ return jsonb_build_object('ok',true,'message','₹'||p_points||' reward redeemed successfully.');
+end $$;
+
 create or replace function public.redeem_reward_secure(p_customer_id uuid,p_points integer,p_bill_number text)
 returns jsonb language plpgsql security definer set search_path=public
 as $$
@@ -288,6 +303,7 @@ revoke all on function public.customer_session_lookup(text) from public,anon,aut
 revoke all on function public.customer_data_secure(uuid) from public,anon,authenticated;
 revoke all on function public.submit_bill_secure(uuid,text,numeric,date,text) from public,anon,authenticated;
 revoke all on function public.redeem_reward_secure(uuid,integer,text) from public,anon,authenticated;
+revoke all on function public.redeem_reward_secure(uuid,integer) from public,anon,authenticated;
 revoke all on function public.owner_redeem_customer(uuid,integer,text) from public,anon,authenticated;
 revoke all on function public.is_owner() from public,anon;
 revoke all on function public.owner_dashboard() from public,anon;
@@ -299,6 +315,7 @@ grant execute on function public.customer_session_lookup(text) to service_role;
 grant execute on function public.customer_data_secure(uuid) to service_role;
 grant execute on function public.submit_bill_secure(uuid,text,numeric,date,text) to service_role;
 grant execute on function public.redeem_reward_secure(uuid,integer,text) to service_role;
+grant execute on function public.redeem_reward_secure(uuid,integer) to service_role;
 grant execute on function public.owner_redeem_customer(uuid,integer,text) to authenticated;
 grant execute on function public.is_owner() to authenticated;
 grant execute on function public.owner_dashboard() to authenticated;
