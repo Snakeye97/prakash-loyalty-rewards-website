@@ -191,6 +191,9 @@ begin
  if exists(select 1 from public.bills where lower(trim(bill_number))=normalized_bill_number) then
    return jsonb_build_object('ok',false,'error','This bill number has already been submitted by a customer.');
  end if;
+ if exists(select 1 from public.redemptions where lower(trim(redeemed_bill_number))=normalized_bill_number) then
+   return jsonb_build_object('ok',false,'error','This bill number has already been used for redemption and cannot earn points again.');
+ end if;
  path_prefix:=p_customer_id::text||'/';
  if p_photo_path is null or left(p_photo_path,length(path_prefix))<>path_prefix then return jsonb_build_object('ok',false,'error','Invalid bill photo path.'); end if;
  insert into public.bills(customer_id,bill_number,amount,purchase_date,photo_path) values(p_customer_id,trim(p_bill_number),p_amount,p_purchase_date,p_photo_path);
