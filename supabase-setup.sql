@@ -31,12 +31,10 @@ create table if not exists public.bills(
 );
 
 
--- Point-system migration: ₹100 earns 10 points for every completed ₹100.
--- This updates existing v4/v5 installations as well as fresh installs.
+-- Point-system migration: ₹100 earns 5 points for every completed ₹100.
+-- This applies only when a bill is approved from now on.
 alter table public.bills drop constraint if exists bills_amount_check;
 alter table public.bills add constraint bills_amount_check check (amount >= 100);
-update public.bills
-set points = case when status='approved' then floor(amount / 100)::int * 10 else 0 end;
 
 create table if not exists public.redemptions(
  id uuid primary key default gen_random_uuid(),
@@ -66,6 +64,8 @@ begin
    execute format('alter table public.redemptions drop constraint if exists %I',constraint_row.conname);
  end loop;
 end $$;
+-- Existing redemptions keep their recorded values unchanged.
+-- New redemptions are restricted by the secure functions below.
 alter table public.redemptions add constraint redemptions_points_check check(points=5 or (points>0 and points%10=0));
 alter table public.redemptions add constraint redemptions_reward_amount_check check((points=5 and reward_amount=200) or (points>0 and points%10=0 and reward_amount=points));
 alter table public.redemptions drop constraint if exists redemptions_min_points_check;
@@ -265,7 +265,7 @@ returns jsonb language plpgsql security definer set search_path=public
 as $$
 begin
  if not public.is_owner() then return jsonb_build_object('ok',false,'error','Owner access required.'); end if;
- update public.bills set status='approved',points=floor(amount/100)::int*10,approved_at=now(),approved_by=auth.uid(),reason=null where id=p_bill_id and status='pending';
+ update public.bills set status='approved',points=floor(amount/100)::int*5,approved_at=now(),approved_by=auth.uid(),reason=null where id=p_bill_id and status='pending';
  if not found then return jsonb_build_object('ok',false,'error','Bill not found or already processed.'); end if;
  return jsonb_build_object('ok',true);
 end $$;

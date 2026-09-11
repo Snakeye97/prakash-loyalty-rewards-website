@@ -10,7 +10,7 @@ WHAT CHANGED
 - Reward redemption uses a PostgreSQL advisory transaction lock to prevent double-spending during concurrent requests.
 - Server-side bill, amount, date, photo-path and reward validation added.
 - Failed bill database inserts remove the uploaded image.
-- Loyalty points are calculated as floor(amount / 100) × 10 (for example ₹99 = 0, ₹100 = 10, ₹999 = 90, ₹1000 = 100).
+- Loyalty points are calculated as floor(amount / 100) × 5 (for example ₹99 = 0, ₹100 = 5, ₹999 = 45, ₹1000 = 50).
 - Local date is used instead of UTC for the browser default date.
 - Theme preference persists in localStorage.
 - Owner dashboard uses protected Supabase Auth + owner_users checks and signed private image URLs.
